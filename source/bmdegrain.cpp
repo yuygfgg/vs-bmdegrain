@@ -19,6 +19,10 @@
 #include <VapourSynth.h>
 #include <VSHelper.h>
 
+#ifdef __ARM_NEON__
+#include <arm_neon.h>
+#endif
+
 #include <config.h>
 
 static VSPlugin * myself = nullptr;
@@ -162,6 +166,58 @@ static inline void generate_search_locations(
     }
 }
 
+#ifdef __ARM_NEON__
+static inline void compute_block_distances(
+    std::vector<std::tuple<float, int, int>> &errors,
+    const float* VS_RESTRICT current_patch,
+    const float* VS_RESTRICT neighbour_patch,
+    int top, int bottom, int left, int right,
+    int stride,
+    int block_size
+) noexcept
+{
+    for (int bm_y = top; bm_y <= bottom; ++bm_y) {
+        for (int bm_x = left; bm_x <= right; ++bm_x) {
+            float error = 0.0f;
+
+            float32x4_t errorVec = vdupq_n_f32(0.0f);
+
+            const float* VS_RESTRICT current_patchp   = current_patch;
+            const float* VS_RESTRICT neighbour_patchp = neighbour_patch;
+
+            for (int patch_y = 0; patch_y < block_size; ++patch_y) {
+                int patch_x = 0;
+
+                for (; patch_x + 4 <= block_size; patch_x += 4) {
+                    float32x4_t vCur = vld1q_f32(&current_patchp[patch_x]);
+                    float32x4_t vNei = vld1q_f32(&neighbour_patchp[patch_x]);
+                    float32x4_t vDiff = vsubq_f32(vCur, vNei);
+                    float32x4_t vMul  = vmulq_f32(vDiff, vDiff);
+
+                    errorVec = vaddq_f32(errorVec, vMul);
+                }
+
+                for (; patch_x < block_size; ++patch_x) {
+                    float diff = current_patchp[patch_x] - neighbour_patchp[patch_x];
+                    error += diff * diff;
+                }
+
+                current_patchp   += block_size;
+                neighbour_patchp += stride;
+            }
+
+            float neonSum = vaddvq_f32(errorVec);
+            error += neonSum;
+
+            errors.emplace_back(error, bm_x, bm_y);
+
+            neighbour_patch++;
+        }
+
+        neighbour_patch += stride - (right - left + 1);
+    }
+}
+#else
 static inline void compute_block_distances(
     std::vector<std::tuple<float, int, int>> & errors,
     const float * VS_RESTRICT current_patch,
@@ -221,6 +277,53 @@ static inline void compute_block_distances(
             current_patchp += block_size;
             neighbour_patchp += stride;
         }
+
+        errors.emplace_back(error, bm_x, bm_y);
+    }
+}
+#endif
+
+static inline void compute_block_distances(
+    std::vector<std::tuple<float, int, int>>& errors,
+    const float* VS_RESTRICT current_patch,
+    const float* VS_RESTRICT refp,
+    const std::vector<std::tuple<int,int>>& search_positions,
+    int stride,
+    int block_size
+) noexcept
+{
+
+    for (size_t i = 0; i < search_positions.size(); i++) {
+        const auto& [bm_x, bm_y] = search_positions[i];
+
+        float error = 0.f;
+        float32x4_t errorVec = vdupq_n_f32(0.f);
+
+        const float* VS_RESTRICT current_patchp   = current_patch;
+        const float* VS_RESTRICT neighbour_patchp = &refp[bm_y * stride + bm_x];
+
+        for (int patch_y = 0; patch_y < block_size; ++patch_y) {
+            int patch_x = 0;
+            for (; patch_x + 4 <= block_size; patch_x += 4) {
+                float32x4_t vCur  = vld1q_f32(&current_patchp[patch_x]);
+                float32x4_t vNei  = vld1q_f32(&neighbour_patchp[patch_x]);
+                float32x4_t vDiff = vsubq_f32(vCur, vNei);
+                float32x4_t vMul  = vmulq_f32(vDiff, vDiff);
+                errorVec = vaddq_f32(errorVec, vMul);
+            }
+
+            for (; patch_x < block_size; ++patch_x) {
+                float diff = current_patchp[patch_x] - neighbour_patchp[patch_x];
+                error += diff * diff;
+            }
+
+            current_patchp   += block_size;
+            neighbour_patchp += stride;
+        }
+
+        float neonSum = vaddvq_f32(errorVec);
+
+        error += neonSum;
 
         errors.emplace_back(error, bm_x, bm_y);
     }
