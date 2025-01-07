@@ -8,6 +8,16 @@ add_library(bmdegrain SHARED source/bmdegrain.cpp)
 
 target_include_directories(bmdegrain PRIVATE ${VCL_HOME})
 
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(STATUS "Using Clang compiler - adding vectorization report flags")
+    target_compile_options(bmdegrain PRIVATE
+        -Rpass=loop-vectorize
+        -Rpass-missed=loop-vectorize
+        -Rpass-analysis=loop-vectorize
+    )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fdiagnostics-absolute-paths -fdiagnostics-color=always")
+endif()
+
 find_package(OpenMP REQUIRED)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(bmdegrain PRIVATE OpenMP::OpenMP_CXX)

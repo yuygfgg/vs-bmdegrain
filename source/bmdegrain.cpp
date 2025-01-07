@@ -21,8 +21,8 @@
 #include <immintrin.h>
 #endif
 
-#include <VapourSynth.h>
-#include <VSHelper.h>
+#include </usr/local/include/vapoursynth/VapourSynth.h>
+#include </usr/local/include/vapoursynth/VSHelper.h>
 
 #include <config.h>
 
@@ -368,7 +368,6 @@ static inline void compute_block_distances(
     }
 #else // __AVX2__
 
-    #pragma omp simd
     for (int bm_y = top; bm_y <= bottom; ++bm_y) {
         for (int bm_x = left; bm_x <= right; ++bm_x) {
             float error = 0.f;
@@ -377,6 +376,7 @@ static inline void compute_block_distances(
             const float * VS_RESTRICT neighbour_patchp = neighbour_patch;
 
             for (int patch_y = 0; patch_y < block_size; ++patch_y) {
+                #pragma omp simd
                 for (int patch_x = 0; patch_x < block_size; ++patch_x) {
                     error += square(current_patchp[patch_x] - neighbour_patchp[patch_x]);
                 }
@@ -422,7 +422,6 @@ static inline void compute_block_distances(
         );
     }
 #else // __AVX2__
-    #pragma omp simd
     for (const auto & [bm_x, bm_y]: search_positions) {
         float error = 0.f;
 
@@ -430,6 +429,7 @@ static inline void compute_block_distances(
         const float * VS_RESTRICT neighbour_patchp = &refp[bm_y * stride + bm_x];
 
         for (int patch_y = 0; patch_y < block_size; ++patch_y) {
+            #pragma omp simd
             for (int patch_x = 0; patch_x < block_size; ++patch_x) {
                 error += square(current_patchp[patch_x] - neighbour_patchp[patch_x]);
             }
@@ -541,13 +541,13 @@ static inline void load_patches(
         );
     }
 #else // __AVX2__
-    #pragma omp simd
     for (int i = 0; i < active_group_size; ++i) {
         auto [error, bm_x, bm_y, bm_t] = errors[i];
 
         const float * VS_RESTRICT src_patchp = &srcps[bm_t][bm_y * stride + bm_x];
 
         for (int patch_y = 0; patch_y < block_size; ++patch_y) {
+            #pragma omp simd
             for (int patch_x = 0; patch_x < block_size; ++patch_x) {
                 float src_val = src_patchp[patch_x];
 
