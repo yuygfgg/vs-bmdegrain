@@ -217,71 +217,6 @@ static inline void compute_block_distances(
         neighbour_patch += stride - (right - left + 1);
     }
 }
-#else
-static inline void compute_block_distances(
-    std::vector<std::tuple<float, int, int>> & errors,
-    const float * VS_RESTRICT current_patch,
-    const float * VS_RESTRICT neighbour_patch,
-    int top, int bottom, int left, int right,
-    int stride,
-    int block_size
-) noexcept {
-
-    for (int bm_y = top; bm_y <= bottom; ++bm_y) {
-        for (int bm_x = left; bm_x <= right; ++bm_x) {
-            float error = 0.f;
-
-            const float * VS_RESTRICT current_patchp = current_patch;
-            const float * VS_RESTRICT neighbour_patchp = neighbour_patch;
-
-            for (int patch_y = 0; patch_y < block_size; ++patch_y) {
-                #pragma omp simd
-                for (int patch_x = 0; patch_x < block_size; ++patch_x) {
-                    error += square(current_patchp[patch_x] - neighbour_patchp[patch_x]);
-                }
-
-                current_patchp += block_size;
-                neighbour_patchp += stride;
-            }
-
-            errors.emplace_back(error, bm_x, bm_y);
-
-            neighbour_patch++;
-        }
-
-        neighbour_patch += stride - (right - left + 1);
-    }
-}
-
-static inline void compute_block_distances(
-    std::vector<std::tuple<float, int, int>> & errors,
-    const float * VS_RESTRICT current_patch,
-    const float * VS_RESTRICT refp,
-    const std::vector<std::tuple<int, int>> & search_positions,
-    int stride,
-    int block_size
-) noexcept {
-
-    for (const auto & [bm_x, bm_y]: search_positions) {
-        float error = 0.f;
-
-        const float * VS_RESTRICT current_patchp = current_patch;
-        const float * VS_RESTRICT neighbour_patchp = &refp[bm_y * stride + bm_x];
-
-        for (int patch_y = 0; patch_y < block_size; ++patch_y) {
-            #pragma omp simd
-            for (int patch_x = 0; patch_x < block_size; ++patch_x) {
-                error += square(current_patchp[patch_x] - neighbour_patchp[patch_x]);
-            }
-
-            current_patchp += block_size;
-            neighbour_patchp += stride;
-        }
-
-        errors.emplace_back(error, bm_x, bm_y);
-    }
-}
-#endif
 
 static inline void compute_block_distances(
     std::vector<std::tuple<float, int, int>>& errors,
@@ -358,6 +293,73 @@ static inline void load_patches(
         denoising_patch += block_stride - square(block_size);
     }
 }
+
+#else
+static inline void compute_block_distances(
+    std::vector<std::tuple<float, int, int>> & errors,
+    const float * VS_RESTRICT current_patch,
+    const float * VS_RESTRICT neighbour_patch,
+    int top, int bottom, int left, int right,
+    int stride,
+    int block_size
+) noexcept {
+
+    for (int bm_y = top; bm_y <= bottom; ++bm_y) {
+        for (int bm_x = left; bm_x <= right; ++bm_x) {
+            float error = 0.f;
+
+            const float * VS_RESTRICT current_patchp = current_patch;
+            const float * VS_RESTRICT neighbour_patchp = neighbour_patch;
+
+            for (int patch_y = 0; patch_y < block_size; ++patch_y) {
+                #pragma omp simd
+                for (int patch_x = 0; patch_x < block_size; ++patch_x) {
+                    error += square(current_patchp[patch_x] - neighbour_patchp[patch_x]);
+                }
+
+                current_patchp += block_size;
+                neighbour_patchp += stride;
+            }
+
+            errors.emplace_back(error, bm_x, bm_y);
+
+            neighbour_patch++;
+        }
+
+        neighbour_patch += stride - (right - left + 1);
+    }
+}
+
+static inline void compute_block_distances(
+    std::vector<std::tuple<float, int, int>> & errors,
+    const float * VS_RESTRICT current_patch,
+    const float * VS_RESTRICT refp,
+    const std::vector<std::tuple<int, int>> & search_positions,
+    int stride,
+    int block_size
+) noexcept {
+
+    for (const auto & [bm_x, bm_y]: search_positions) {
+        float error = 0.f;
+
+        const float * VS_RESTRICT current_patchp = current_patch;
+        const float * VS_RESTRICT neighbour_patchp = &refp[bm_y * stride + bm_x];
+
+        for (int patch_y = 0; patch_y < block_size; ++patch_y) {
+            #pragma omp simd
+            for (int patch_x = 0; patch_x < block_size; ++patch_x) {
+                error += square(current_patchp[patch_x] - neighbour_patchp[patch_x]);
+            }
+
+            current_patchp += block_size;
+            neighbour_patchp += stride;
+        }
+
+        errors.emplace_back(error, bm_x, bm_y);
+    }
+}
+#endif
+
 
 static inline void extend_errors(
     std::vector<std::tuple<float, int, int, int>> & errors,
