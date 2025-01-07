@@ -367,6 +367,8 @@ static inline void compute_block_distances(
         return compute_block_distances_avx2<BlockSizeInfo::General>(errors, current_patch, neighbour_patch, top, bottom, left, right, stride, block_size);
     }
 #else // __AVX2__
+
+    #pragma omp simd
     for (int bm_y = top; bm_y <= bottom; ++bm_y) {
         for (int bm_x = left; bm_x <= right; ++bm_x) {
             float error = 0.f;
@@ -420,6 +422,7 @@ static inline void compute_block_distances(
         );
     }
 #else // __AVX2__
+    #pragma omp simd
     for (const auto & [bm_x, bm_y]: search_positions) {
         float error = 0.f;
 
@@ -538,7 +541,8 @@ static inline void load_patches(
         );
     }
 #else // __AVX2__
-    for (int i = 0, index = 0; i < active_group_size; ++i) {
+    #pragma omp simd
+    for (int i = 0; i < active_group_size; ++i) {
         auto [error, bm_x, bm_y, bm_t] = errors[i];
 
         const float * VS_RESTRICT src_patchp = &srcps[bm_t][bm_y * stride + bm_x];

@@ -8,6 +8,11 @@ add_library(bmdegrain SHARED source/bmdegrain.cpp)
 
 target_include_directories(bmdegrain PRIVATE ${VCL_HOME})
 
+find_package(OpenMP REQUIRED)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(bmdegrain PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 set_target_properties(bmdegrain PROPERTIES
     CXX_EXTENSIONS OFF
     CXX_STANDARD 17
