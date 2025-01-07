@@ -264,36 +264,6 @@ static inline void compute_block_distances(
     }
 }
 
-static inline void load_patches(
-    float * VS_RESTRICT denoising_patch, int block_stride,
-    const std::vector<const float *> & srcps,
-    const std::vector<std::tuple<float, int, int, int>> & errors,
-    int stride,
-    int active_group_size,
-    int block_size
-) noexcept {
-
-    for (int i = 0; i < active_group_size; ++i) {
-        auto [error, bm_x, bm_y, bm_t] = errors[i];
-
-        const float * VS_RESTRICT src_patchp = &srcps[bm_t][bm_y * stride + bm_x];
-
-        for (int patch_y = 0; patch_y < block_size; ++patch_y) {
-            #pragma omp simd
-            for (int patch_x = 0; patch_x < block_size; ++patch_x) {
-                float src_val = src_patchp[patch_x];
-
-                denoising_patch[patch_x] = src_val;
-            }
-
-            src_patchp += stride;
-            denoising_patch += block_size;
-        }
-
-        denoising_patch += block_stride - square(block_size);
-    }
-}
-
 #else
 static inline void compute_block_distances(
     std::vector<std::tuple<float, int, int>> & errors,
@@ -360,6 +330,36 @@ static inline void compute_block_distances(
 }
 #endif
 
+
+static inline void load_patches(
+    float * VS_RESTRICT denoising_patch, int block_stride,
+    const std::vector<const float *> & srcps,
+    const std::vector<std::tuple<float, int, int, int>> & errors,
+    int stride,
+    int active_group_size,
+    int block_size
+) noexcept {
+
+    for (int i = 0; i < active_group_size; ++i) {
+        auto [error, bm_x, bm_y, bm_t] = errors[i];
+
+        const float * VS_RESTRICT src_patchp = &srcps[bm_t][bm_y * stride + bm_x];
+
+        for (int patch_y = 0; patch_y < block_size; ++patch_y) {
+            #pragma omp simd
+            for (int patch_x = 0; patch_x < block_size; ++patch_x) {
+                float src_val = src_patchp[patch_x];
+
+                denoising_patch[patch_x] = src_val;
+            }
+
+            src_patchp += stride;
+            denoising_patch += block_size;
+        }
+
+        denoising_patch += block_stride - square(block_size);
+    }
+}
 
 static inline void extend_errors(
     std::vector<std::tuple<float, int, int, int>> & errors,
