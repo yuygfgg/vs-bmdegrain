@@ -16,13 +16,8 @@
 #include <unordered_map>
 #include <vector>
 
-#ifdef __AVX2__
-#include <vectorclass.h>
-#include <immintrin.h>
-#endif
-
-#include </usr/local/include/vapoursynth/VapourSynth.h>
-#include </usr/local/include/vapoursynth/VSHelper.h>
+#include <VapourSynth.h>
+#include <VSHelper.h>
 
 #include <config.h>
 
@@ -51,11 +46,7 @@ struct Workspace {
         int block_size, int group_size, int radius
     ) noexcept {
 
-#ifdef __AVX2__
-        constexpr int pad = 7;
-#else
         constexpr int pad = 0;
-#endif
 
         current_patch = vs_aligned_malloc<float>((square(block_size) + pad) * sizeof(float), 64);
 
@@ -127,184 +118,6 @@ struct BMDegrainData {
 };
 } // namespace
 
-#ifdef __AVX2__
-static inline Vec8i make_mask(int block_size_m8) noexcept {
-    static constexpr int temp[16] {-1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0};
-
-    return Vec8i().load(temp + 8 - block_size_m8);
-}
-#endif
-
-#ifdef __AVX2__
-namespace {
-enum class BlockSizeInfo { Is8, Mod8, General };
-
-struct Empty {};
-}
-
-template <BlockSizeInfo dispatch>
-static inline void compute_block_distances_avx2(
-    std::vector<std::tuple<float, int, int>> & errors,
-    const float * VS_RESTRICT current_patch,
-    const float * VS_RESTRICT neighbour_patch,
-    int top, int bottom, int left, int right,
-    int stride, int block_size
-) noexcept {
-
-    if constexpr (dispatch == BlockSizeInfo::Is8) {
-        block_size = 8;
-    }
-
-    [[maybe_unused]] std::conditional_t<dispatch == BlockSizeInfo::General, Vec8i, Empty> mask;
-    if constexpr (dispatch == BlockSizeInfo::General) {
-        mask = make_mask(block_size % 8);
-    }
-
-    for (int bm_y = top; bm_y <= bottom; ++bm_y) {
-        for (int bm_x = left; bm_x <= right; ++bm_x) {
-            Vec8f vec_error {0.f};
-
-            const float * VS_RESTRICT current_patchp = current_patch;
-            const float * VS_RESTRICT neighbour_patchp = neighbour_patch;
-
-            for (int patch_y = 0; patch_y < block_size; ++patch_y) {
-                if constexpr (dispatch == BlockSizeInfo::Is8) {
-                    Vec8f vec_current = Vec8f().load_a(current_patchp);
-                    Vec8f vec_neighbour = Vec8f().load(neighbour_patchp);
-
-                    Vec8f diff = vec_current - vec_neighbour;
-                    vec_error = mul_add(diff, diff, vec_error);
-
-                    current_patchp += 8;
-                    neighbour_patchp += stride;
-                } else if constexpr (dispatch == BlockSizeInfo::Mod8) {
-                    for (int patch_x = 0; patch_x < block_size; patch_x += 8) {
-                        Vec8f vec_current = Vec8f().load_a(current_patchp);
-                        Vec8f vec_neighbour = Vec8f().load(neighbour_patchp);
-
-                        Vec8f diff = vec_current - vec_neighbour;
-                        vec_error = mul_add(diff, diff, vec_error);
-
-                        current_patchp += 8;
-                        neighbour_patchp += 8;
-                    }
-
-                    neighbour_patchp += stride - block_size;
-                } else if constexpr (dispatch == BlockSizeInfo::General) {
-                    for (int patch_x = 0; patch_x < (block_size & (-8)); patch_x += 8) {
-                        Vec8f vec_current = Vec8f().load(current_patchp);
-                        Vec8f vec_neighbour = Vec8f().load(neighbour_patchp);
-
-                        Vec8f diff = vec_current - vec_neighbour;
-                        vec_error = mul_add(diff, diff, vec_error);
-
-                        current_patchp += 8;
-                        neighbour_patchp += 8;
-                    }
-
-                    {
-                        Vec8f vec_current = _mm256_maskload_ps(current_patchp, mask);
-                        Vec8f vec_neighbour = _mm256_maskload_ps(neighbour_patchp, mask);
-
-                        Vec8f diff = vec_current - vec_neighbour;
-                        vec_error = mul_add(diff, diff, vec_error);
-
-                        current_patchp += block_size % 8;
-                        neighbour_patchp += stride - (block_size & (-8));
-                    }
-                }
-            }
-
-            float error { horizontal_add(vec_error) };
-
-            errors.emplace_back(error, bm_x, bm_y);
-
-            neighbour_patch++;
-        }
-
-        neighbour_patch += stride - (right - left + 1);
-    }
-}
-
-template <BlockSizeInfo dispatch>
-static inline void compute_block_distances_avx2(
-    std::vector<std::tuple<float, int, int>> & errors,
-    const float * VS_RESTRICT current_patch,
-    const float * VS_RESTRICT refp,
-    const std::vector<std::tuple<int, int>> & search_positions,
-    int stride, int block_size
-) noexcept {
-
-    if constexpr (dispatch == BlockSizeInfo::Is8) {
-        block_size = 8;
-    }
-
-    [[maybe_unused]] std::conditional_t<dispatch == BlockSizeInfo::General, Vec8i, Empty> mask;
-    if constexpr (dispatch == BlockSizeInfo::General) {
-        mask = make_mask(block_size % 8);
-    }
-
-    for (const auto & [bm_x, bm_y]: search_positions) {
-        Vec8f vec_error {0.f};
-
-        const float * VS_RESTRICT current_patchp = current_patch;
-        const float * VS_RESTRICT neighbour_patchp = &refp[bm_y * stride + bm_x];
-
-        for (int patch_y = 0; patch_y < block_size; ++patch_y) {
-            if constexpr (dispatch == BlockSizeInfo::Is8) {
-                Vec8f vec_current = Vec8f().load_a(current_patchp);
-                Vec8f vec_neighbour = Vec8f().load(neighbour_patchp);
-
-                Vec8f diff = vec_current - vec_neighbour;
-                vec_error = mul_add(diff, diff, vec_error);
-
-                current_patchp += 8;
-                neighbour_patchp += stride;
-            } else if constexpr (dispatch == BlockSizeInfo::Mod8) {
-                for (int patch_x = 0; patch_x < block_size; patch_x += 8) {
-                    Vec8f vec_current = Vec8f().load_a(current_patchp);
-                    Vec8f vec_neighbour = Vec8f().load(neighbour_patchp);
-
-                    Vec8f diff = vec_current - vec_neighbour;
-                    vec_error = mul_add(diff, diff, vec_error);
-
-                    current_patchp += 8;
-                    neighbour_patchp += 8;
-                }
-
-                neighbour_patchp += stride - block_size;
-            } else if constexpr (dispatch == BlockSizeInfo::General) {
-                for (int patch_x = 0; patch_x < (block_size & (-8)); patch_x += 8) {
-                    Vec8f vec_current = Vec8f().load(current_patchp);
-                    Vec8f vec_neighbour = Vec8f().load(neighbour_patchp);
-
-                    Vec8f diff = vec_current - vec_neighbour;
-                    vec_error = mul_add(diff, diff, vec_error);
-
-                    current_patchp += 8;
-                    neighbour_patchp += 8;
-                }
-
-                {
-                    Vec8f vec_current = _mm256_maskload_ps(current_patchp, mask);
-                    Vec8f vec_neighbour = _mm256_maskload_ps(neighbour_patchp, mask);
-
-                    Vec8f diff = vec_current - vec_neighbour;
-                    vec_error = mul_add(diff, diff, vec_error);
-
-                    current_patchp += block_size % 8;
-                    neighbour_patchp += stride - (block_size & (-8));
-                }
-            }
-        }
-
-        float error { horizontal_add(vec_error) };
-
-        errors.emplace_back(error, bm_x, bm_y);
-    }
-}
-#endif // __AVX2__
-
 static inline void generate_search_locations(
     const std::tuple<float, int, int> * center_positions, int num_center_positions,
     int block_size, int width, int height, int bm_range,
@@ -358,16 +171,6 @@ static inline void compute_block_distances(
     int block_size
 ) noexcept {
 
-#ifdef __AVX2__
-    if (block_size == 8) {
-        return compute_block_distances_avx2<BlockSizeInfo::Is8>(errors, current_patch, neighbour_patch, top, bottom, left, right, stride, block_size);
-    } else if ((block_size % 8) == 0) {
-        return compute_block_distances_avx2<BlockSizeInfo::Mod8>(errors, current_patch, neighbour_patch, top, bottom, left, right, stride, block_size);
-    } else {
-        return compute_block_distances_avx2<BlockSizeInfo::General>(errors, current_patch, neighbour_patch, top, bottom, left, right, stride, block_size);
-    }
-#else // __AVX2__
-
     for (int bm_y = top; bm_y <= bottom; ++bm_y) {
         for (int bm_x = left; bm_x <= right; ++bm_x) {
             float error = 0.f;
@@ -392,7 +195,6 @@ static inline void compute_block_distances(
 
         neighbour_patch += stride - (right - left + 1);
     }
-#endif // __AVX2__
 }
 
 static inline void compute_block_distances(
@@ -404,24 +206,6 @@ static inline void compute_block_distances(
     int block_size
 ) noexcept {
 
-#ifdef __AVX2__
-    if (block_size == 8) {
-        return compute_block_distances_avx2<BlockSizeInfo::Is8>(
-            errors,
-            current_patch, refp, search_positions, stride, block_size
-        );
-    } else if ((block_size % 8) == 0) {
-        return compute_block_distances_avx2<BlockSizeInfo::Mod8>(
-            errors,
-            current_patch, refp, search_positions, stride, block_size
-        );
-    } else {
-        return compute_block_distances_avx2<BlockSizeInfo::General>(
-            errors,
-            current_patch, refp, search_positions, stride, block_size
-        );
-    }
-#else // __AVX2__
     for (const auto & [bm_x, bm_y]: search_positions) {
         float error = 0.f;
 
@@ -440,76 +224,7 @@ static inline void compute_block_distances(
 
         errors.emplace_back(error, bm_x, bm_y);
     }
-#endif // __AVX2__
 }
-
-#ifdef __AVX2__
-template <BlockSizeInfo dispatch>
-static inline void load_patches_avx2(
-    float * VS_RESTRICT denoising_patch, int block_stride,
-    const std::vector<const float *> & srcps,
-    const std::vector<std::tuple<float, int, int, int>> & errors,
-    int stride,
-    int active_group_size,
-    int block_size
-) noexcept {
-
-    if constexpr (dispatch == BlockSizeInfo::Is8) {
-        block_size = 8;
-    }
-
-    [[maybe_unused]] std::conditional_t<dispatch == BlockSizeInfo::General, Vec8i, Empty> mask;
-    if constexpr (dispatch == BlockSizeInfo::General) {
-        mask = make_mask(block_size % 8);
-    }
-
-    assert(stride % 8 == 0);
-
-    for (int i = 0; i < active_group_size; ++i) {
-        auto [error, bm_x, bm_y, bm_t] = errors[i];
-
-        const float * VS_RESTRICT src_patchp = &srcps[bm_t][bm_y * stride + bm_x];
-
-        for (int patch_y = 0; patch_y < block_size; ++patch_y) {
-            if constexpr (dispatch == BlockSizeInfo::Is8) {
-                Vec8f vec_src = Vec8f().load(src_patchp);
-                vec_src.store_a(denoising_patch);
-                src_patchp += stride;
-                denoising_patch += 8;
-            } else if constexpr (dispatch == BlockSizeInfo::Mod8) {
-                for (int patch_x = 0; patch_x < block_size; patch_x += 8) {
-                    Vec8f vec_src = Vec8f().load(src_patchp);
-                    vec_src.store_a(denoising_patch);
-                    src_patchp += 8;
-                    denoising_patch += 8;
-                }
-
-                src_patchp += stride - block_size;
-            } if constexpr (dispatch == BlockSizeInfo::General) {
-                for (int patch_x = 0; patch_x < (block_size & (-8)); patch_x += 8) {
-                    Vec8f vec_src = Vec8f().load(src_patchp);
-                    vec_src.store(denoising_patch);
-                    src_patchp += 8;
-                    denoising_patch += 8;
-                }
-
-                {
-                    Vec8f vec_src = _mm256_maskload_ps(src_patchp, mask);
-                    vec_src.store(denoising_patch); // denoising_patch is padded
-                    src_patchp += stride - (block_size & (-8));
-                    denoising_patch += block_size % 8;
-                }
-            }
-        }
-
-        if constexpr (dispatch == BlockSizeInfo::General) {
-            denoising_patch += block_stride - square(block_size);
-        } else {
-            assert(block_stride - square(block_size) == 0);
-        }
-    }
-}
-#endif // __AVX2__
 
 static inline void load_patches(
     float * VS_RESTRICT denoising_patch, int block_stride,
@@ -520,27 +235,6 @@ static inline void load_patches(
     int block_size
 ) noexcept {
 
-#ifdef __AVX2__
-    if (block_size == 8) {
-        return load_patches_avx2<BlockSizeInfo::Is8>(
-            denoising_patch, block_stride,
-            srcps, errors, stride,
-            active_group_size, block_size
-        );
-    } else if ((block_size % 8) == 0) { // block_size % 8 == 0
-        return load_patches_avx2<BlockSizeInfo::Mod8>(
-            denoising_patch, block_stride,
-            srcps, errors, stride,
-            active_group_size, block_size
-        );
-    } else { // block_size % 8 != 0
-        return load_patches_avx2<BlockSizeInfo::General>(
-            denoising_patch, block_stride,
-            srcps, errors, stride,
-            active_group_size, block_size
-        );
-    }
-#else // __AVX2__
     for (int i = 0; i < active_group_size; ++i) {
         auto [error, bm_x, bm_y, bm_t] = errors[i];
 
@@ -560,7 +254,6 @@ static inline void load_patches(
 
         denoising_patch += block_stride - square(block_size);
     }
-#endif // __AVX2__
 }
 
 static inline void extend_errors(
@@ -786,26 +479,8 @@ static inline void aggregation(
     const float * VS_RESTRICT weight = &intermediate[height * width];
 
     for (int y = 0; y < height; ++y) {
-        int x = 0;
-
-#ifdef __AVX2__
-        const float * VS_RESTRICT vec_wdstp { wdst };
-        const float * VS_RESTRICT vec_weightp { weight };
-        float * VS_RESTRICT vec_dstp {dstp};
-
-        for ( ; x < (width & (-8)); x += 8) {
-            Vec8f vec_wdst = Vec8f().load(vec_wdstp);
-            Vec8f vec_weight = Vec8f().load(vec_weightp);
-            Vec8f vec_dst = vec_wdst * approx_recipr(vec_weight);
-            vec_dst.store_a(vec_dstp);
-
-            vec_wdstp += 8;
-            vec_weightp += 8;
-            vec_dstp += 8;
-        }
-#endif
-
-        for ( ; x < width; ++x) {
+        #pragma omp simd
+        for (int x = 0; x < width; ++x) {
             dstp[x] = wdst[x] / weight[x];
         }
 
@@ -824,11 +499,6 @@ static void process(
 ) noexcept {
 
     const auto threadId = std::this_thread::get_id();
-
-#ifdef __AVX2__
-    auto control_word = get_control_word();
-    no_subnormals();
-#endif
 
     Workspace workspace {};
     bool init = true;
@@ -952,10 +622,6 @@ static void process(
             aggregation(dstp, workspace.intermediate, width, height, stride);
         }
     }
-
-#ifdef __AVX2__
-    set_control_word(control_word);
-#endif
 }
 
 static void VS_CC BMDegrainRawInit(
